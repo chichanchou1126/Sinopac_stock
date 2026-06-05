@@ -38,7 +38,7 @@
         </thead>
         <tbody id="stock-table-body">
             <tr>
-                <td colspan="5" class="loading">正在精準讀取上市櫃每日收盤行情...</td>
+                <td colspan="5" class="loading">正在透過安全代理穿透證交所防護牆...</td>
             </tr>
         </tbody>
     </table>
@@ -52,7 +52,7 @@
         "2330": 1000,   // 台積電
         "2454": 500,    // 聯發科
         "0050": 2000,   // 元大台灣50
-        "00751B": 5000  // 元大公司債 (上櫃)
+        "00751B": 5000  // 元大公司債
     };
     // ==========================================================
 
@@ -71,42 +71,45 @@
         const targetIds = Object.keys(myStocks).map(id => id.trim().toUpperCase());
         const globalPriceMap = {};
 
+        // 建立 CORS 穿透代理網址
+        const proxyUrl = "https://api.allorigins.win/get?url=";
+
         try {
-            // 【1. 抓取上市大盤收盤行情 (包含 2330, 2454, 0050)】
+            // 【1. 穿透抓取上市大盤收盤行情 (2330, 2454, 0050)】
             try {
-                // MI_INDEX20 是證交所最穩定的每日收盤個股行情大表
-                const twseRes = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX20');
-                if (twseRes.ok) {
-                    const twseData = await twseRes.json();
-                    console.log("成功取得上市資料範例：", twseData[0]); // 除錯用
+                const target = encodeURIComponent('https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX20');
+                const res = await fetch(`${proxyUrl}${target}`);
+                if (res.ok) {
+                    const wrapper = await res.json();
+                    const twseData = JSON.parse(wrapper.contents);
+                    
                     twseData.forEach(item => {
                         const code = (item.Code || item.StockId || "").trim().toUpperCase();
                         if (targetIds.includes(code)) {
-                            // 修正可能因為 API 欄位不同造成的錯誤，相容 Price 或 ClosingPrice
                             const rawPrice = item.Price || item.ClosingPrice || "0";
                             globalPriceMap[code] = parseFloat(rawPrice.replace(/,/g, '')) || 0;
                         }
                     });
                 }
-            } catch (e) { console.error("上市主要管道失敗", e); }
+            } catch (e) { console.error("代理抓取上市資料失敗", e); }
 
-            // 【2. 抓取上櫃與債券 ETF 收盤行情 (針對 00751B)】
+            // 【2. 穿透抓取上櫃與債券 ETF 收盤行情 (00751B)】
             try {
-                // 這是櫃買中心所有上櫃資產、ETF、債券的官方每日收盤大表
-                const tpexRes = await fetch('https://openapi.tpex.org.tw/v1/tpex_main_daily_CLOSE');
-                if (tpexRes.ok) {
-                    const tpexData = await tpexRes.json();
-                    console.log("成功取得上櫃資料範例：", tpexData[0]); // 除錯用
+                const target = encodeURIComponent('https://openapi.tpex.org.tw/v1/tpex_main_daily_CLOSE');
+                const res = await fetch(`${proxyUrl}${target}`);
+                if (res.ok) {
+                    const wrapper = await res.json();
+                    const tpexData = JSON.parse(wrapper.contents);
+                    
                     tpexData.forEach(item => {
-                        // 上櫃 API 的代號欄位通常是 SecuritiesCompanyCode 或 No
-                        const code = (item.SecuritiesCompanyCode || item.No || "").trim().toUpperCase();
+                        const code = (item.SecuritiesCompanyCode || item.No || item.Code || "").trim().toUpperCase();
                         if (targetIds.includes(code)) {
                             const rawPrice = item.ClosePrice || item.Price || item.Close || "0";
                             globalPriceMap[code] = parseFloat(rawPrice.replace(/,/g, '')) || 0;
                         }
                     });
                 }
-            } catch (e) { console.error("上櫃主要管道失敗", e); }
+            } catch (e) { console.error("代理抓取上櫃資料失敗", e); }
 
             // 【3. 輸出表格與計算市值】
             Object.keys(myStocks).forEach(originalCode => {
@@ -122,7 +125,7 @@
                     <tr>
                         <td><b>${code}</b></td>
                         <td>${name}</td>
-                        <td class="text-right">${price > 0 ? '$' + price.toFixed(2) : '<span style="color:#ef4444;">未取得價格</span>'}</td>
+                        <td class="text-right">${price > 0 ? '$' + price.toFixed(2) : '<span style="color:#f59e0b;">今日未交易或維護中</span>'}</td>
                         <td class="text-right">${shares.toLocaleString()}</td>
                         <td class="text-right">${price > 0 ? '$' + marketValue.toLocaleString(undefined, {maximumFractionDigits: 0}) : '-'}</td>
                     </tr>
@@ -134,7 +137,7 @@
 
         } catch (error) {
             console.error('全局錯誤:', error);
-            tableBody.innerHTML = `<tr><td colspan="5" style="color:#ef4444; text-align:center; font-weight:bold;">⚠️ 系統解析異常，請稍後再試。</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan="5" style="color:#ef4444; text-align:center; font-weight:bold;">⚠️ 代理伺服器繁忙，請重新整理網頁。</td></tr>`;
         }
     }
 
@@ -143,6 +146,7 @@
 
 </body>
 </html>
+
 
 
 
