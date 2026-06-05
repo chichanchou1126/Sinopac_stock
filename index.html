@@ -38,7 +38,7 @@
         </thead>
         <tbody id="stock-table-body">
             <tr>
-                <td colspan="5" class="loading">正在連線 Yahoo Finance 獲取即時報價...</td>
+                <td colspan="5" class="loading">正在穿透網路阻擋，讀取即時報價中...</td>
             </tr>
         </tbody>
     </table>
@@ -56,12 +56,40 @@
     };
     // ==========================================================
 
-    // 事先定義好中文名稱，避免 Yahoo API 撈到英文名稱
+    // 強制定義中文名稱，避開 API 抓不到名稱的防線
     const stockNames = {
         "2330.TW": "台積電",
         "2454.TW": "聯發科",
         "0050.TW": "元大台灣50"
     };
+
+    async function getStockPrice(symbol) {
+        // 嘗試方案 A：直接呼叫 Yahoo Finance (加上隨機參數避免快取攔截)
+        try {
+            const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?nocache=${Date.now()}`);
+            if (res.ok) {
+                const json = await res.json();
+                return json.chart.result[0].meta.regularMarketPrice || 0;
+            }
+        } catch (e) {
+            console.log(`方案 A 失敗，切換方案 B`);
+        }
+
+        // 嘗試方案 B：透過專門的免費反向代理，幫 GitHub 穿透 Yahoo 防火牆
+        try {
+            const targetUrl = encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`);
+            const res = await fetch(`https://api.allorigins.win/get?url=${targetUrl}`);
+            if (res.ok) {
+                const wrapper = await res.json();
+                const json = JSON.parse(wrapper.contents);
+                return json.chart.result[0].meta.regularMarketPrice || 0;
+            }
+        } catch (e) {
+            console.log(`方案 B 失敗`);
+        }
+        
+        return 0;
+    }
 
     async function fetchStockData() {
         const tableBody = document.getElementById('stock-table-body');
@@ -69,54 +97,27 @@
         let htmlContent = '';
         const targetIds = Object.keys(myStocks);
 
-        try {
-            // 逐一呼叫 Yahoo Finance 的公開 Chart API (支援 CORS 且極度穩定)
-            for (const symbol of targetIds) {
-                try {
-                    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`);
-                    if (!res.ok) throw new Error(`無法讀取 ${symbol}`);
-                    
-                    const json = await res.json();
-                    const meta = json.chart.result[0].meta;
-                    
-                    // 取得最新一筆即時股價
-                    const price = meta.regularMarketPrice || 0;
-                    const name = stockNames[symbol] || meta.symbol;
-                    const shares = myStocks[symbol] || 0;
-                    const marketValue = price * shares;
-                    
-                    totalValue += marketValue;
+        for (const symbol of targetIds) {
+            const price = await getStockPrice(symbol);
+            const name = stockNames[symbol] || symbol.replace('.TW', '');
+            const shares = myStocks[symbol] || 0;
+            const marketValue = price * shares;
+            
+            totalValue += marketValue;
 
-                    htmlContent += `
-                        <tr>
-                            <td><b>${symbol.replace('.TW', '')}</b></td>
-                            <td>${name}</td>
-                            <td class="text-right">$${price.toFixed(2)}</td>
-                            <td class="text-right">${shares.toLocaleString()}</td>
-                            <td class="text-right">$${marketValue.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
-                        </tr>
-                    `;
-                } catch (singleError) {
-                    console.error(`單檔股票 ${symbol} 讀取失敗:`, singleError);
-                    htmlContent += `
-                        <tr>
-                            <td><b>${symbol}</b></td>
-                            <td style="color:gray;">讀取失敗</td>
-                            <td class="text-right">-</td>
-                            <td class="text-right">${myStocks[symbol].toLocaleString()}</td>
-                            <td class="text-right">-</td>
-                        </tr>
-                    `;
-                }
-            }
-
-            tableBody.innerHTML = htmlContent;
-            document.getElementById('total-value').textContent = totalValue.toLocaleString(undefined, {maximumFractionDigits: 0});
-
-        } catch (error) {
-            console.error('全局錯誤:', error);
-            tableBody.innerHTML = `<tr><td colspan="5" style="color:#ef4444; text-align:center; font-weight:bold;">⚠️ 網路連線異常，請稍後再試。</td></tr>`;
+            htmlContent += `
+                <tr>
+                    <td><b>${symbol.replace('.TW', '').replace('.TWO', '')}</b></td>
+                    <td>${name}</td>
+                    <td class="text-right">${price > 0 ? '$' + price.toFixed(2) : '<span style="color:#f59e0b;">請稍後重整理</span>'}</td>
+                    <td class="text-right">${shares.toLocaleString()}</td>
+                    <td class="text-right">${price > 0 ? '$' + marketValue.toLocaleString(undefined, {maximumFractionDigits: 0}) : '-'}</td>
+                </tr>
+            `;
         }
+
+        tableBody.innerHTML = htmlContent;
+        document.getElementById('total-value').textContent = totalValue > 0 ? totalValue.toLocaleString(undefined, {maximumFractionDigits: 0}) : "載入中";
     }
 
     fetchStockData();
@@ -124,6 +125,7 @@
 
 </body>
 </html>
+
 
 
 
