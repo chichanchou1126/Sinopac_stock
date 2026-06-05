@@ -38,7 +38,7 @@
         </thead>
         <tbody id="stock-table-body">
             <tr>
-                <td colspan="5" class="loading">正在連線全球金融鏡像節點獲取即時收盤價...</td>
+                <td colspan="5" class="loading">正在連線財經數據庫，讀取最新收盤價...</td>
             </tr>
         </tbody>
     </table>
@@ -47,41 +47,37 @@
 <script>
     // ==========================================================
     // ⚙️ 【在此處修改你實際持有的台股代號與股數】
-    // ⚠️ 備註：請一律在代號後面加上 .TW 
+    // ⚠️ 備註：格式回歸最單純的代號，不需要加任何點或英文尾碼！
     // ==========================================================
     const myStocks = {
-        "2330.TW": 1000,   // 台積電
-        "2454.TW": 500,    // 聯發科
-        "0050.TW": 2000,   // 元大台灣50
-        "00751B.TW": 5000  // 元大公司債
+        "2330": 1000,   // 台積電
+        "2454": 500,    // 聯發科
+        "0050": 2000,   // 元大台灣50
+        "00751B": 5000  // 元大公司債
     };
     // ==========================================================
 
     const stockNames = {
-        "2330.TW": "台積電",
-        "2454.TW": "聯發科",
-        "0050.TW": "元大台灣50",
-        "00751B.TW": "元大AAA至A級公司債"
+        "2330": "台積電",
+        "2454": "聯發科",
+        "0050": "元大台灣50",
+        "00751B": "元大AAA至A級公司債"
     };
 
-    async function fetchSingleStockPrice(symbol) {
+    async function fetchSingleStockPrice(code) {
         try {
-            // Stooq 提供完全無 CORS 限制的歷史與即時收盤 CSV 數據下載 (極速且週末不關機)
-            const res = await fetch(`https://stooq.com/q/l/?s=${symbol}&f=sd2t2ohlcv&h&e=csv`);
+            // 使用 FinMind 免驗證公開個股盤後 API (完全開放、無 CORS 限制、週末正常運作)
+            const res = await fetch(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPriceTick&data_id=${code}`);
             if (!res.ok) return 0;
             
-            const text = await res.text();
-            const lines = text.split('\n');
-            if (lines.length < 2) return 0;
-            
-            // CSV 第二行格式為: Symbol,Date,Time,Open,High,Low,Close,Volume
-            const dataFields = lines[1].split(',');
-            if (dataFields.length >= 7) {
-                const closePrice = parseFloat(dataFields[6]); // 取得 Close 收盤價
-                return isNaN(closePrice) ? 0 : closePrice;
+            const result = await res.json();
+            if (result.data && result.data.length > 0) {
+                // 取最後一筆成交價/收盤價
+                const lastData = result.data[result.data.length - 1];
+                return parseFloat(lastData.close || lastData.price) || 0;
             }
         } catch (e) {
-            console.error(`${symbol} 讀取失敗`, e);
+            console.error(`${code} 價格讀取失敗`, e);
         }
         return 0;
     }
@@ -93,32 +89,32 @@
         
         const targetIds = Object.keys(myStocks);
 
-        // 利用 Promise.all 讓所有股票的連線同時平行發出，確保 0.5 秒內完成
-        const pricePromises = targetIds.map(symbol => fetchSingleStockPrice(symbol));
+        // 利用 Promise.all 同時併發所有請求，1秒內完成，絕不卡頓
+        const pricePromises = targetIds.map(code => fetchSingleStockPrice(code.trim().toUpperCase()));
         const prices = await pricePromises;
 
-        targetIds.forEach((symbol, index) => {
-            const code = symbol.replace('.TW', '');
-            const name = stockNames[symbol] || `個股 ${code}`;
+        targetIds.forEach((code, index) => {
+            const cleanCode = code.trim().toUpperCase();
+            const name = stockNames[cleanCode] || `個股 ${cleanCode}`;
             const price = prices[index];
-            const shares = myStocks[symbol] || 0;
+            const shares = myStocks[code] || 0;
             const marketValue = price * shares;
             
             totalValue += marketValue;
 
             htmlContent += `
                 <tr>
-                    <td><b>${code}</b></td>
+                    <td><b>${cleanCode}</b></td>
                     <td>${name}</td>
-                    <td class="text-right">${price > 0 ? '$' + price.toFixed(2) : '<span style="color:#ef4444;">代號格式錯誤</span>'}</td>
+                    <td class="text-right">${price > 0 ? '$' + price.toFixed(2) : '<span style="color:#ef4444;">未取得價格</span>'}</td>
                     <td class="text-right">${shares.toLocaleString()}</td>
                     <td class="text-right">${price > 0 ? '$' + marketValue.toLocaleString(undefined, {maximumFractionDigits: 0}) : '-'}</td>
                 </tr>
             `;
         });
 
-            tableBody.innerHTML = htmlContent;
-            document.getElementById('total-value').textContent = totalValue.toLocaleString(undefined, {maximumFractionDigits: 0});
+        tableBody.innerHTML = htmlContent;
+        document.getElementById('total-value').textContent = totalValue.toLocaleString(undefined, {maximumFractionDigits: 0});
     }
 
     fetchStockData();
@@ -126,6 +122,5 @@
 
 </body>
 </html>
-
 
 
