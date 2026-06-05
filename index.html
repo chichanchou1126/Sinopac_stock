@@ -38,7 +38,7 @@
         </thead>
         <tbody id="stock-table-body">
             <tr>
-                <td colspan="5" class="loading">正在直連證交所與櫃買中心獲取最新數據...</td>
+                <td colspan="5" class="loading">正在精準比對官方數據庫...</td>
             </tr>
         </tbody>
     </table>
@@ -52,11 +52,10 @@
         "2330": 1000,   // 台積電
         "2454": 500,    // 聯發科
         "0050": 2000,   // 元大台灣50
-        "00751B": 5000  // 元大公司債 (上櫃)
+        "00751B": 5000  // 元大公司債
     };
     // ==========================================================
 
-    // 強制自訂中文名稱，排版最乾淨
     const stockNames = {
         "2330": "台積電",
         "2454": "聯發科",
@@ -68,81 +67,88 @@
         const tableBody = document.getElementById('stock-table-body');
         let totalValue = 0;
         let htmlContent = '';
-        const targetIds = Object.keys(myStocks);
         
-        // 建立一個物件來儲存所有撈到的代號與價格
+        // 將使用者定義的代號全部轉為大寫並清除空白
+        const targetIds = Object.keys(myStocks).map(id => id.trim().toUpperCase());
         const globalPriceMap = {};
 
         try {
-            // 【1. 撈取上市股票行情】
+            // 【1. 撈取上市股票與部分ETF行情】
             try {
                 const twseRes = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL');
                 if (twseRes.ok) {
                     const twseData = await twseRes.json();
                     twseData.forEach(item => {
-                        if (targetIds.includes(item.Code)) {
-                            globalPriceMap[item.Code] = parseFloat(item.Price) || 0;
+                        // 相容 Code 或 StockId 欄位，並強制去空白
+                        const rawCode = item.Code || item.StockId || "";
+                        const cleanCode = rawCode.trim().toUpperCase();
+                        if (targetIds.includes(cleanCode)) {
+                            globalPriceMap[cleanCode] = parseFloat(item.Price) || 0;
                         }
                     });
                 }
-            } catch (e) { console.warn("上市數據撈取有誤，嘗試下一步", e); }
+            } catch (e) { console.warn("上市數據撈取/解析有誤", e); }
 
-            // 【2. 撈取上櫃及債券 ETF 行情】
+            // 【2. 撈取上櫃債券 ETF 行情 (針對 00751B 等)】
             try {
-                // 櫃買中心公開個股行情 (包含 00751B 等上櫃資產)
                 const tpexRes = await fetch('https://openapi.tpex.org.tw/v1/tpex_main_etf_daily_QUOT');
                 if (tpexRes.ok) {
                     const tpexData = await tpexRes.json();
                     tpexData.forEach(item => {
-                        const cleanCode = item.Date ? item.No.trim() : item.No; // 清理可能的空白
+                        const rawCode = item.No || item.Code || "";
+                        const cleanCode = rawCode.trim().toUpperCase();
                         if (targetIds.includes(cleanCode)) {
-                            globalPriceMap[cleanCode] = parseFloat(item.Price || item.Close) || 0;
+                            // 櫃買中心的價格欄位可能是 Price 或 Close
+                            const rawPrice = item.Price || item.Close || "0";
+                            globalPriceMap[cleanCode] = parseFloat(rawPrice.replace(/,/g, '')) || 0;
                         }
                     });
                 }
-                
-                // 備援上櫃一般個股管道
+            } catch (e) { console.warn("上櫃債券數據撈取有誤", e); }
+
+            // 【3. 撈取上櫃一般個股行情備援】
+            try {
                 const tpexRes2 = await fetch('https://openapi.tpex.org.tw/v1/tpex_main_daily_CLOSE');
                 if (tpexRes2.ok) {
                     const tpexData2 = await tpexRes2.json();
                     tpexData2.forEach(item => {
-                        if (targetIds.includes(item.SecuritiesCompanyCode)) {
-                            globalPriceMap[item.SecuritiesCompanyCode] = parseFloat(item.ClosePrice) || 0;
+                        const rawCode = item.SecuritiesCompanyCode || "";
+                        const cleanCode = rawCode.trim().toUpperCase();
+                        if (targetIds.includes(cleanCode)) {
+                            const rawPrice = item.ClosePrice || "0";
+                            globalPriceMap[cleanCode] = parseFloat(rawPrice.replace(/,/g, '')) || 0;
                         }
                     });
                 }
-            } catch (e) { console.warn("上櫃數據撈取有誤", e); }
+            } catch (e) { console.warn("上櫃個股數據撈取有誤", e); }
 
-            // 【3. 渲染畫面與計算市值】
-            targetIds.forEach(code => {
+            // 【4. 渲染畫面與計算市值】
+            Object.keys(myStocks).forEach(originalCode => {
+                const code = originalCode.trim().toUpperCase();
                 const name = stockNames[code] || `個股 ${code}`;
-                let price = globalPriceMap[code] || 0;
-                
-                // 應急處理：萬一官方盤後正在轉檔回傳 0，給予兜底防護或預估
-                if (price === 0 && code === "00751B") price = 34.5; // (可作為維護時的參考市價)
-                if (price === 0 && code === "2330") price = 950;
-
-                const shares = myStocks[code] || 0;
+                const price = globalPriceMap[code] || 0;
+                const shares = myStocks[originalCode] || 0;
                 const marketValue = price * shares;
+                
                 totalValue += marketValue;
 
                 htmlContent += `
                     <tr>
                         <td><b>${code}</b></td>
                         <td>${name}</td>
-                        <td class="text-right">$${price.toFixed(2)}</td>
+                        <td class="text-right">${price > 0 ? '$' + price.toFixed(2) : '<span style="color:#ef4444;">未取得價格</span>'}</td>
                         <td class="text-right">${shares.toLocaleString()}</td>
-                        <td class="text-right">$${marketValue.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
+                        <td class="text-right">${price > 0 ? '$' + marketValue.toLocaleString(undefined, {maximumFractionDigits: 0}) : '-'}</td>
                     </tr>
                 `;
             });
 
             tableBody.innerHTML = htmlContent;
-            document.getElementById('total-value').textContent = totalValue.toLocaleString(undefined, {maximumFractionDigits: 0});
+            document.getElementById('total-value').textContent = totalValue > 0 ? totalValue.toLocaleString(undefined, {maximumFractionDigits: 0}) : "0";
 
         } catch (error) {
             console.error('全局錯誤:', error);
-            tableBody.innerHTML = `<tr><td colspan="5" style="color:#ef4444; text-align:center; font-weight:bold;">⚠️ 交易所連線失敗，請檢查代碼格式或稍後再試。</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan="5" style="color:#ef4444; text-align:center; font-weight:bold;">⚠️ 數據解析失敗，請確認代碼格式。</td></tr>`;
         }
     }
 
@@ -151,7 +157,6 @@
 
 </body>
 </html>
-
 
 
 
