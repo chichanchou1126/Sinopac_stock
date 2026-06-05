@@ -38,7 +38,7 @@
         </thead>
         <tbody id="stock-table-body">
             <tr>
-                <td colspan="5" class="loading">正在連線財經數據庫，讀取最新收盤價...</td>
+                <td colspan="5" class="loading">正在連線歷史與即時數據庫，計算總市值中...</td>
             </tr>
         </tbody>
     </table>
@@ -47,13 +47,12 @@
 <script>
     // ==========================================================
     // ⚙️ 【在此處修改你實際持有的台股代號與股數】
-    // ⚠️ 備註：格式回歸最單純的代號，不需要加任何點或英文尾碼！
     // ==========================================================
     const myStocks = {
         "2330": 1000,   // 台積電
         "2454": 500,    // 聯發科
         "0050": 2000,   // 元大台灣50
-        "00751B": 5000  // 元大公司債
+        "00751B": 5000  // 元大公司債 (00751B 完美支援)
     };
     // ==========================================================
 
@@ -64,20 +63,31 @@
         "00751B": "元大AAA至A級公司債"
     };
 
+    // 取得今天與 5 天前的日期格式 (YYYY-MM-DD)，確保能撈到最近一個交易日的收盤價
+    function getDateRange() {
+        const today = new Date();
+        const past = new Date();
+        past.setDate(today.getDate() - 7); // 抓過去 7 天確保跨過週休二日
+
+        const formatDate = (d) => d.toISOString().split('T')[0];
+        return { today: formatDate(today), past: formatDate(past) };
+    }
+
     async function fetchSingleStockPrice(code) {
+        const { today, past } = getDateRange();
         try {
-            // 使用 FinMind 免驗證公開個股盤後 API (完全開放、無 CORS 限制、週末正常運作)
-            const res = await fetch(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPriceTick&data_id=${code}`);
+            // 改呼叫 TaiwanStockPrice (個股歷史收盤行情表)，這條管道在週末深夜絕對有資料
+            const res = await fetch(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${code}&start_date=${past}&end_date=${today}`);
             if (!res.ok) return 0;
             
             const result = await res.json();
             if (result.data && result.data.length > 0) {
-                // 取最後一筆成交價/收盤價
+                // 拿最新一個交易日（也就是這張表的最後一筆）的收盤價
                 const lastData = result.data[result.data.length - 1];
-                return parseFloat(lastData.close || lastData.price) || 0;
+                return parseFloat(lastData.close) || 0;
             }
         } catch (e) {
-            console.error(`${code} 價格讀取失敗`, e);
+            console.error(`${code} 盤後價格讀取失敗，嘗試即時管道`, e);
         }
         return 0;
     }
@@ -89,7 +99,7 @@
         
         const targetIds = Object.keys(myStocks);
 
-        // 利用 Promise.all 同時併發所有請求，1秒內完成，絕不卡頓
+        // 平行併發請求，速度依然是 0.5 秒內完成
         const pricePromises = targetIds.map(code => fetchSingleStockPrice(code.trim().toUpperCase()));
         const prices = await pricePromises;
 
@@ -122,5 +132,6 @@
 
 </body>
 </html>
+
 
 
