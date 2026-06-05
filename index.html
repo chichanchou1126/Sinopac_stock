@@ -38,7 +38,7 @@
         </thead>
         <tbody id="stock-table-body">
             <tr>
-                <td colspan="5" class="loading">正在精準比對官方數據庫...</td>
+                <td colspan="5" class="loading">正在精準讀取上市櫃每日收盤行情...</td>
             </tr>
         </tbody>
     </table>
@@ -52,7 +52,7 @@
         "2330": 1000,   // 台積電
         "2454": 500,    // 聯發科
         "0050": 2000,   // 元大台灣50
-        "00751B": 5000  // 元大公司債
+        "00751B": 5000  // 元大公司債 (上櫃)
     };
     // ==========================================================
 
@@ -68,61 +68,47 @@
         let totalValue = 0;
         let htmlContent = '';
         
-        // 將使用者定義的代號全部轉為大寫並清除空白
         const targetIds = Object.keys(myStocks).map(id => id.trim().toUpperCase());
         const globalPriceMap = {};
 
         try {
-            // 【1. 撈取上市股票與部分ETF行情】
+            // 【1. 抓取上市大盤收盤行情 (包含 2330, 2454, 0050)】
             try {
-                const twseRes = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL');
+                // MI_INDEX20 是證交所最穩定的每日收盤個股行情大表
+                const twseRes = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX20');
                 if (twseRes.ok) {
                     const twseData = await twseRes.json();
+                    console.log("成功取得上市資料範例：", twseData[0]); // 除錯用
                     twseData.forEach(item => {
-                        // 相容 Code 或 StockId 欄位，並強制去空白
-                        const rawCode = item.Code || item.StockId || "";
-                        const cleanCode = rawCode.trim().toUpperCase();
-                        if (targetIds.includes(cleanCode)) {
-                            globalPriceMap[cleanCode] = parseFloat(item.Price) || 0;
+                        const code = (item.Code || item.StockId || "").trim().toUpperCase();
+                        if (targetIds.includes(code)) {
+                            // 修正可能因為 API 欄位不同造成的錯誤，相容 Price 或 ClosingPrice
+                            const rawPrice = item.Price || item.ClosingPrice || "0";
+                            globalPriceMap[code] = parseFloat(rawPrice.replace(/,/g, '')) || 0;
                         }
                     });
                 }
-            } catch (e) { console.warn("上市數據撈取/解析有誤", e); }
+            } catch (e) { console.error("上市主要管道失敗", e); }
 
-            // 【2. 撈取上櫃債券 ETF 行情 (針對 00751B 等)】
+            // 【2. 抓取上櫃與債券 ETF 收盤行情 (針對 00751B)】
             try {
-                const tpexRes = await fetch('https://openapi.tpex.org.tw/v1/tpex_main_etf_daily_QUOT');
+                // 這是櫃買中心所有上櫃資產、ETF、債券的官方每日收盤大表
+                const tpexRes = await fetch('https://openapi.tpex.org.tw/v1/tpex_main_daily_CLOSE');
                 if (tpexRes.ok) {
                     const tpexData = await tpexRes.json();
+                    console.log("成功取得上櫃資料範例：", tpexData[0]); // 除錯用
                     tpexData.forEach(item => {
-                        const rawCode = item.No || item.Code || "";
-                        const cleanCode = rawCode.trim().toUpperCase();
-                        if (targetIds.includes(cleanCode)) {
-                            // 櫃買中心的價格欄位可能是 Price 或 Close
-                            const rawPrice = item.Price || item.Close || "0";
-                            globalPriceMap[cleanCode] = parseFloat(rawPrice.replace(/,/g, '')) || 0;
+                        // 上櫃 API 的代號欄位通常是 SecuritiesCompanyCode 或 No
+                        const code = (item.SecuritiesCompanyCode || item.No || "").trim().toUpperCase();
+                        if (targetIds.includes(code)) {
+                            const rawPrice = item.ClosePrice || item.Price || item.Close || "0";
+                            globalPriceMap[code] = parseFloat(rawPrice.replace(/,/g, '')) || 0;
                         }
                     });
                 }
-            } catch (e) { console.warn("上櫃債券數據撈取有誤", e); }
+            } catch (e) { console.error("上櫃主要管道失敗", e); }
 
-            // 【3. 撈取上櫃一般個股行情備援】
-            try {
-                const tpexRes2 = await fetch('https://openapi.tpex.org.tw/v1/tpex_main_daily_CLOSE');
-                if (tpexRes2.ok) {
-                    const tpexData2 = await tpexRes2.json();
-                    tpexData2.forEach(item => {
-                        const rawCode = item.SecuritiesCompanyCode || "";
-                        const cleanCode = rawCode.trim().toUpperCase();
-                        if (targetIds.includes(cleanCode)) {
-                            const rawPrice = item.ClosePrice || "0";
-                            globalPriceMap[cleanCode] = parseFloat(rawPrice.replace(/,/g, '')) || 0;
-                        }
-                    });
-                }
-            } catch (e) { console.warn("上櫃個股數據撈取有誤", e); }
-
-            // 【4. 渲染畫面與計算市值】
+            // 【3. 輸出表格與計算市值】
             Object.keys(myStocks).forEach(originalCode => {
                 const code = originalCode.trim().toUpperCase();
                 const name = stockNames[code] || `個股 ${code}`;
@@ -144,11 +130,11 @@
             });
 
             tableBody.innerHTML = htmlContent;
-            document.getElementById('total-value').textContent = totalValue > 0 ? totalValue.toLocaleString(undefined, {maximumFractionDigits: 0}) : "0";
+            document.getElementById('total-value').textContent = totalValue.toLocaleString(undefined, {maximumFractionDigits: 0});
 
         } catch (error) {
             console.error('全局錯誤:', error);
-            tableBody.innerHTML = `<tr><td colspan="5" style="color:#ef4444; text-align:center; font-weight:bold;">⚠️ 數據解析失敗，請確認代碼格式。</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan="5" style="color:#ef4444; text-align:center; font-weight:bold;">⚠️ 系統解析異常，請稍後再試。</td></tr>`;
         }
     }
 
