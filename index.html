@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的股票市值儀表板</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f7fb; margin: 0; padding: 40px; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        h1 { text-align: center; color: #1e3a8a; margin-bottom: 30px; }
+        .summary { background: #e0f2fe; padding: 20px; border-radius: 8px; text-align: center; font-size: 24px; font-weight: bold; color: #0369a1; margin-bottom: 25px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+        th { background-color: #f8fafc; color: #64748b; font-weight: 600; }
+        tr:hover { background-color: #f8fafc; }
+        .text-right { text-align: right; }
+        .loading { text-align: center; color: #64748b; font-style: italic; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📊 我的股票市值儀表板</h1>
+    
+    <div class="summary">
+        總市值：NT$ <span id="total-value">計算中...</span>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>股票代號</th>
+                <th>股票名稱</th>
+                <th class="text-right">持有股數</th>
+                <th class="text-right">目前股價</th>
+                <th class="text-right">當前市值</th>
+            </tr>
+        </thead>
+        <tbody id="stock-table-body">
+            <tr>
+                <td colspan="5" class="loading">正在獲取即時股市資料...</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<script>
+    // ================= 【在此修改你的庫存股票】 =================
+    const myStocks = {
+        "2330": 1000,  // 台積電 1000 股 (1張)        
+        "0050": 2000   // 元大台灣50 2000 股
+    };
+    // ==========================================================
+
+    const targetIds = Object.keys(myStocks);
+
+    async function fetchStockData() {
+        try {
+            // 使用證交所每日個股行情 API (此 API 包含上市與一般個股，更新時間通常為盤後或定期)
+            // 提示：若在盤中需要即時跳動資料，通常需改接其他第三方即時 API
+            const response = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL');
+            const data = await response.json();
+            
+            let totalValue = 0;
+            const tableBody = document.getElementById('stock-table-body');
+            tableBody.innerHTML = ''; // 清空載入中字樣
+
+            // 篩選出我們有購買的股票
+            const filteredData = data.filter(item => targetIds.includes(item.Code));
+
+            filteredData.forEach(stock => {
+                const code = stock.Code;
+                const name = stock.Name;
+                const shares = myStocks[code];
+                
+                // 證交所 API 的殖利率/本益比資料庫中通常有收盤價，此處轉換為數字
+                // 備註：若特定 API 欄位有變，可視需求調整
+                const price = parseFloat(stock.Price) || 0; 
+                const marketValue = shares * price;
+                totalValue += marketValue;
+
+                // 插入表格列
+                const row = `
+                    <tr>
+                        <td>${code}</td>
+                        <td>${name}</td>
+                        <td class="text-right">${shares.toLocaleString()}</td>
+                        <td class="text-right">$${price.toFixed(2)}</td>
+                        <td class="text-right">$${marketValue.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
+                    </tr>
+                `;
+                tableBody.insertAdjacentHTML('beforeend', row);
+            });
+
+            // 如果有部分股票沒在該 API 中找到（例如上櫃股票），做個提醒
+            if (filteredData.length < targetIds.length) {
+                const missing = targetIds.filter(id => !filteredData.some(f => f.Code === id));
+                console.warn("未找到以下代號資料（可能為上櫃或今日未交易）：", missing);
+            }
+
+            // 更新總市值
+            document.getElementById('total-value').textContent = totalValue.toLocaleString(undefined, {maximumFractionDigits: 0});
+
+        } catch (error) {
+            console.error('資料擷取失敗:', error);
+            document.getElementById('stock-table-body').innerHTML = `<tr><td colspan="5" style="color:red; text-align:center;">資料載入失敗，請稍後再試。</td></tr>`;
+        }
+    }
+
+    // 執行函式
+    fetchStockData();
+</script>
+
+</body>
+</html>
+
