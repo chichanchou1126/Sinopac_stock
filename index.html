@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>我的股票市值儀表板</title>
+    <title>Google Finance 股票市值儀表板</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f7fb; margin: 0; padding: 40px; color: #333; }
         .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
@@ -20,97 +20,104 @@
 <body>
 
 <div class="container">
-    <h1>📊 我的股票市值儀表板</h1>
+    <h1>📊 Google Finance 雲端市值儀表板</h1>
     
     <div class="summary">
-        總市值：NT$ <span id="total-value">計算中...</span>
+        總資產價值：NT$ <span id="total-value">計算中...</span>
     </div>
 
     <table>
         <thead>
             <tr>
                 <th>股票代號</th>
-                <th>股票名稱</th>
-                <th class="text-right">持有股數</th>
                 <th class="text-right">目前股價</th>
+                <th class="text-right">持有股數</th>
                 <th class="text-right">當前市值</th>
             </tr>
         </thead>
         <tbody id="stock-table-body">
             <tr>
-                <td colspan="5" class="loading">正在獲取即時股市資料...</td>
+                <td colspan="4" class="loading">正在連線 Google Sheets 獲取最新報價...</td>
             </tr>
         </tbody>
     </table>
 </div>
 
 <script>
-    // ================= 【在此修改你的庫存股票】 =================
-    const myStocks = {
-        "2330": 1000,  // 台積電 1000 股 (1張)        
-        "0050": 2000   // 元大台灣50 2000 股
-    };
-    // ==========================================================
+    // =============================================================
+    // ⚠️ 請在下方雙引號內貼上你從 Google 試算表發布的 CSV 網址
+    // =============================================================
+    const csvUrl = "YOUR_CSV_URL_HERE"; 
+    // =============================================================
 
-    const targetIds = Object.keys(myStocks);
-
-    async function fetchStockData() {
+    async function fetchGoogleSheetData() {
+        const tableBody = document.getElementById('stock-table-body');
         try {
-            // 使用證交所每日個股行情 API (此 API 包含上市與一般個股，更新時間通常為盤後或定期)
-            // 提示：若在盤中需要即時跳動資料，通常需改接其他第三方即時 API
-            const response = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL');
-            const data = await response.json();
+            if (csvUrl.includes("YOUR_CSV_URL_HERE")) {
+                throw new Error("您尚未修改程式碼中的 csvUrl 網址！");
+            }
+
+            const response = await fetch(csvUrl);
+            if (!response.ok) throw new Error("網頁無法載入 Google 試算表，請確認試算表已成功發布。");
+            
+            const csvText = await response.text();
+            
+            // 相容各種作業系統的換行符號（\r\n 或 \n）
+            const lines = csvText.split(/\r?\n/);
             
             let totalValue = 0;
-            const tableBody = document.getElementById('stock-table-body');
-            tableBody.innerHTML = ''; // 清空載入中字樣
+            let hasValidRow = false;
+            let htmlContent = '';
 
-            // 篩選出我們有購買的股票
-            const filteredData = data.filter(item => targetIds.includes(item.Code));
+            // 從第二行開始讀取資料 (跳過第一行的標題 Symbol, Price, Shares)
+            for(let i = 1; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue; // 略過空白行
 
-            filteredData.forEach(stock => {
-                const code = stock.Code;
-                const name = stock.Name;
-                const shares = myStocks[code];
+                // 使用逗號切開欄位
+                const row = line.split(',');
+                if (row.length < 3 || !row[0]) continue;
+
+                // 清理資料中可能夾帶的雙引號
+                const symbol = row[0].replace(/"/g, '').trim();
+                const price = parseFloat(row[1].replace(/"/g, '')) || 0;
+                const shares = parseFloat(row[2].replace(/"/g, '')) || 0;
+                const marketValue = price * shares;
                 
-                // 證交所 API 的殖利率/本益比資料庫中通常有收盤價，此處轉換為數字
-                // 備註：若特定 API 欄位有變，可視需求調整
-                const price = parseFloat(stock.Price) || 0; 
-                const marketValue = shares * price;
                 totalValue += marketValue;
+                hasValidRow = true;
 
-                // 插入表格列
-                const row = `
+                htmlContent += `
                     <tr>
-                        <td>${code}</td>
-                        <td>${name}</td>
+                        <td><b>${symbol}</b></td>
+                        <td class="text-right">$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                         <td class="text-right">${shares.toLocaleString()}</td>
-                        <td class="text-right">$${price.toFixed(2)}</td>
                         <td class="text-right">$${marketValue.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
                     </tr>
                 `;
-                tableBody.insertAdjacentHTML('beforeend', row);
-            });
-
-            // 如果有部分股票沒在該 API 中找到（例如上櫃股票），做個提醒
-            if (filteredData.length < targetIds.length) {
-                const missing = targetIds.filter(id => !filteredData.some(f => f.Code === id));
-                console.warn("未找到以下代號資料（可能為上櫃或今日未交易）：", missing);
             }
 
-            // 更新總市值
+            if (!hasValidRow) {
+                throw new Error("試算表中沒有有效的股票資料，請檢查試算表的內容格式。");
+            }
+
+            tableBody.innerHTML = htmlContent;
             document.getElementById('total-value').textContent = totalValue.toLocaleString(undefined, {maximumFractionDigits: 0});
 
         } catch (error) {
-            console.error('資料擷取失敗:', error);
-            document.getElementById('stock-table-body').innerHTML = `<tr><td colspan="5" style="color:red; text-align:center;">資料載入失敗，請稍後再試。</td></tr>`;
+            console.error('詳細錯誤訊息:', error);
+            tableBody.innerHTML = `<tr><td colspan="4" style="color:red; text-align:center;">錯誤：${error.message}<br><small style="color:#999;">請按 F12 開啟 Console 查看詳細日誌</small></td></tr>`;
         }
     }
 
-    // 執行函式
-    fetchStockData();
+    fetchGoogleSheetData();
 </script>
 
 </body>
 </html>
+
+
+
+
+
 
