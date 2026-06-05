@@ -38,7 +38,7 @@
         </thead>
         <tbody id="stock-table-body">
             <tr>
-                <td colspan="5" class="loading">正在獲取即時股市資料...</td>
+                <td colspan="5" class="loading">正在連線安全金融節點獲取報價...</td>
             </tr>
         </tbody>
     </table>
@@ -55,110 +55,96 @@
     };
     // ==========================================================
 
+    const stockNames = {
+        "2330": "台積電",
+        "2454": "聯發科",
+        "0050": "元大台灣50"
+    };
+
     async function fetchStockData() {
         const tableBody = document.getElementById('stock-table-body');
+        let totalValue = 0;
+        let htmlContent = '';
+        const targetIds = Object.keys(myStocks);
+
         try {
-            // 改用無 CORS 限制的台灣個股盤後/即時資訊公開 API 來源
-            const response = await fetch('https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPriceTick&data_id=2330'); 
-            // 備註：為了確保最高的穩定性與速度，此處採用一次性撈取當日全台股行情的免費管道
-            const allPriceResponse = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX20');
+            // 使用完全允許網頁前端跨網域呼叫(CORS-enabled)的免費台股每日行情節點
+            const response = await fetch('https://raw.githubusercontent.com/Asoul/tsmc-stock/main/api/today.json');
+            if (!response.ok) throw new Error("主要節點載入失敗");
             
-            // 如果證交所官方阻擋，則自動切換至備用開放管道
-            let stockList = [];
-            if (allPriceResponse.ok) {
-                stockList = await allPriceResponse.json();
-            } else {
-                // 備用無阻擋開放節點 (每日收盤行情)
-                const backupRes = await fetch('https://raw.githubusercontent.com/Asoul/tsmc-stock/main/api/today.json').catch(() => null);
-                if (backupRes && backupRes.ok) stockList = await backupRes.json();
-            }
+            const stockList = await response.json();
 
-            if (!stockList || stockList.length === 0) {
-                // 如果官方節點因盤後維護斷線，使用通用開放數據集
-                const res = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL');
-                stockList = await res.json();
-            }
-
-            let totalValue = 0;
-            let htmlContent = '';
-            const targetIds = Object.keys(myStocks);
-
-            // 篩選出使用者設定的股票
             targetIds.forEach(code => {
-                // 尋找對應代號的股票資料 (相容不同 API 的欄位名稱)
-                const stockInfo = stockList.find(item => (item.Code || item.stock_id) === code);
+                // 尋找對應代號
+                const stockInfo = stockList.find(item => item.Code === code || item.stock_id === code);
                 
-                let name = "台灣個股";
-                let price = 0;
-
-                if (stockInfo) {
-                    name = stockInfo.Name || stockInfo.stock_name || code;
-                    // 取得價格 (轉換不同 API 的欄位：Price 或 ClosingPrice)
-                    price = parseFloat(stockInfo.Price || stockInfo.ClosingPrice) || 0;
-                } else {
-                    // 若剛好遇到 API 盤後更新空檔，給予一個預估提示
-                    name = `代號 ${code}`;
-                }
-
+                const name = stockNames[code] || (stockInfo ? (stockInfo.Name || stockInfo.stock_name) : `個股 ${code}`);
+                const price = stockInfo ? (parseFloat(stockInfo.Price || stockInfo.ClosingPrice) || 0) : 0;
                 const shares = myStocks[code] || 0;
                 const marketValue = price * shares;
+                
                 totalValue += marketValue;
 
                 htmlContent += `
                     <tr>
                         <td><b>${code}</b></td>
                         <td>${name}</td>
-                        <td class="text-right">$${price > 0 ? price.toFixed(2) : "更新中"}</td>
-                        <td class="text-right">${shares.toLocaleString()}</td>
-                        <td class="text-right">${marketValue > 0 ? '$' + marketValue.toLocaleString(undefined, {maximumFractionDigits: 0}) : "計算中"}</td>
-                    </tr>
-                `;
-            });
-
-            tableBody.innerHTML = htmlContent;
-            document.getElementById('total-value').textContent = totalValue > 0 ? totalValue.toLocaleString(undefined, {maximumFractionDigits: 0}) : "請重新整理";
-
-        } catch (error) {
-            console.error('詳細錯誤:', error);
-            // 萬一因平日非交易時間或深夜維護導致全部失效，啟用終極靜態防護，避免畫面直接卡死
-            fallbackLocalDisplay();
-        }
-    }
-
-    // 終極防禦：若 API 全數斷線，改用替代穩定管道抓取
-    async function fallbackLocalDisplay() {
-        const tableBody = document.getElementById('stock-table-body');
-        try {
-            // 改呼叫民間無 CORS 阻擋的每日基本收盤行情
-            const res = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL'));
-            const json = await res.json();
-            const stockList = JSON.parse(json.contents);
-            
-            let totalValue = 0;
-            let htmlContent = '';
-            
-            Object.keys(myStocks).forEach(code => {
-                const stockInfo = stockList.find(item => item.Code === code);
-                const price = stockInfo ? (parseFloat(stockInfo.Price) || 0) : 0;
-                const name = stockInfo ? stockInfo.Name : code;
-                const shares = myStocks[code];
-                const marketValue = price * shares;
-                totalValue += marketValue;
-
-                htmlContent += `
-                    <tr>
-                        <td><b>${code}</b></td>
-                        <td>${name}</td>
-                        <td class="text-right">$${price.toFixed(2)}</td>
+                        <td class="text-right">$${price > 0 ? price.toFixed(2) : "未交易"}</td>
                         <td class="text-right">${shares.toLocaleString()}</td>
                         <td class="text-right">$${marketValue.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
                     </tr>
                 `;
             });
+
             tableBody.innerHTML = htmlContent;
             document.getElementById('total-value').textContent = totalValue.toLocaleString(undefined, {maximumFractionDigits: 0});
-        } catch(e) {
-            tableBody.innerHTML = `<tr><td colspan="5" style="color:red; text-align:center;">交易所伺服器維護中，請稍後再試。</td></tr>`;
+
+        } catch (error) {
+            console.warn('切換至第二備用穩定節點...', error);
+            
+            // 萬一主要的靜態 GitHub 鏡像節點掛了，啟動備用 FinMind 財經開放管道
+            try {
+                let loadedCount = 0;
+                tableBody.innerHTML = ''; 
+
+                for (const code of targetIds) {
+                    // 呼叫免簽名的個股即時資訊
+                    const res = await fetch(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPriceTick&data_id=${code}`);
+                    const result = await res.json();
+                    
+                    let price = 0;
+                    if (result.data && result.data.length > 0) {
+                        // 取最新一筆成交價
+                        price = result.data[result.data.length - 1].close || result.data[result.data.length - 1].price || 0;
+                    }
+                    
+                    const name = stockNames[code] || `個股 ${code}`;
+                    const shares = myStocks[code] || 0;
+                    const marketValue = price * shares;
+                    totalValue += marketValue;
+                    loadedCount++;
+
+                    tableBody.innerHTML += `
+                        <tr>
+                            <td><b>${code}</b></td>
+                            <td>${name}</td>
+                            <td class="text-right">$${price > 0 ? price.toFixed(2) : "盤後維護中"}</td>
+                            <td class="text-right">${shares.toLocaleString()}</td>
+                            <td class="text-right">$${marketValue.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
+                        </tr>
+                    `;
+                }
+
+                if(loadedCount > 0) {
+                    document.getElementById('total-value').textContent = totalValue.toLocaleString(undefined, {maximumFractionDigits: 0});
+                } else {
+                    throw new Error("雙節點皆無回應");
+                }
+
+            } catch (fallbackError) {
+                console.error('所有 API 均告失敗:', fallbackError);
+                tableBody.innerHTML = `<tr><td colspan="5" style="color:#ef4444; text-align:center; font-weight:bold;">⚠️ 外部財經伺服器連線逾時，請確認網路連線或稍後再試。</td></tr>`;
+            }
         }
     }
 
@@ -167,4 +153,7 @@
 
 </body>
 </html>
+
+
+
 
